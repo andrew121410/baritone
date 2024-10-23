@@ -30,6 +30,8 @@ import baritone.api.schematic.ISchematic;
 import baritone.api.schematic.IStaticSchematic;
 import baritone.api.schematic.MaskSchematic;
 import baritone.api.schematic.SubstituteSchematic;
+import baritone.api.schematic.RotatedSchematic;
+import baritone.api.schematic.MirroredSchematic;
 import baritone.api.schematic.format.ISchematicFormat;
 import baritone.api.utils.*;
 import baritone.api.utils.input.Input;
@@ -42,7 +44,6 @@ import baritone.utils.PathingCommandContext;
 import baritone.utils.schematic.MapArtSchematic;
 import baritone.utils.schematic.SelectionSchematic;
 import baritone.utils.schematic.SchematicSystem;
-import baritone.utils.schematic.format.defaults.LitematicaSchematic;
 import baritone.utils.schematic.litematica.LitematicaHelper;
 import baritone.utils.schematic.schematica.SchematicaHelper;
 import com.google.common.collect.ImmutableMap;
@@ -51,8 +52,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
-import net.minecraft.nbt.NbtAccounter;
-import net.minecraft.nbt.NbtIo;
 import net.minecraft.util.Tuple;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.item.BlockItem;
@@ -77,7 +76,6 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.nio.file.Files;
 import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -119,6 +117,12 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         boolean buildingSelectionSchematic = schematic instanceof SelectionSchematic;
         if (!Baritone.settings().buildSubstitutes.value.isEmpty()) {
             this.schematic = new SubstituteSchematic(this.schematic, Baritone.settings().buildSubstitutes.value);
+        }
+        if (Baritone.settings().buildSchematicMirror.value != net.minecraft.world.level.block.Mirror.NONE) {
+            this.schematic = new MirroredSchematic(this.schematic, Baritone.settings().buildSchematicMirror.value);
+        }
+        if (Baritone.settings().buildSchematicRotation.value != net.minecraft.world.level.block.Rotation.NONE) {
+            this.schematic = new RotatedSchematic(this.schematic, Baritone.settings().buildSchematicRotation.value);
         }
         // TODO this preserves the old behavior, but maybe we should bake the setting value right here
         this.schematic = new MaskSchematic(this.schematic) {
@@ -230,19 +234,13 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
     public void buildOpenLitematic(int i) {
         if (LitematicaHelper.isLitematicaPresent()) {
             //if java.lang.NoSuchMethodError is thrown see comment in SchematicPlacementManager
-            if (LitematicaHelper.hasLoadedSchematic()) {
-                String name = LitematicaHelper.getName(i);
-                try {
-                    LitematicaSchematic schematic1 = new LitematicaSchematic(NbtIo.readCompressed(Files.newInputStream(LitematicaHelper.getSchematicFile(i).toPath()), NbtAccounter.unlimitedHeap()), false);
-                    Vec3i correctedOrigin = LitematicaHelper.getCorrectedOrigin(schematic1, i);
-                    ISchematic schematic2 = LitematicaHelper.blackMagicFuckery(schematic1, i);
-                    schematic2 = applyMapArtAndSelection(origin, (IStaticSchematic) schematic2);
-                    build(name, schematic2, correctedOrigin);
-                } catch (Exception e) {
-                    logDirect("Schematic File could not be loaded.");
-                }
+            if (LitematicaHelper.hasLoadedSchematic(i)) {
+                Tuple<IStaticSchematic, Vec3i> schematic = LitematicaHelper.getSchematic(i);
+                Vec3i correctedOrigin = schematic.getB();
+                ISchematic schematic2 = applyMapArtAndSelection(correctedOrigin, schematic.getA());
+                build(schematic.getA().toString(), schematic2, correctedOrigin);
             } else {
-                logDirect("No schematic currently loaded");
+                logDirect(String.format("List of placements has no entry %s", i + 1));
             }
         } else {
             logDirect("Litematica is not present");
@@ -373,7 +371,11 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
             if (!placementPlausible(new BetterBlockPos(x, y, z), toPlace)) {
                 continue;
             }
-            AABB aabb = placeAgainstState.getShape(ctx.world(), placeAgainstPos).bounds();
+            VoxelShape shape = placeAgainstState.getShape(ctx.world(), placeAgainstPos);
+            if (shape.isEmpty()) {
+                continue;
+            }
+            AABB aabb = shape.bounds();
             for (Vec3 placementMultiplier : aabbSideMultipliers(against)) {
                 double placeX = placeAgainstPos.x + aabb.minX * placementMultiplier.x + aabb.maxX * (1 - placementMultiplier.x);
                 double placeY = placeAgainstPos.y + aabb.minY * placementMultiplier.y + aabb.maxY * (1 - placementMultiplier.y);
@@ -543,7 +545,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         }
 
         Optional<Tuple<BetterBlockPos, Rotation>> toBreak = toBreakNearPlayer(bcc);
-        if (toBreak.isPresent() && isSafeToCancel && ctx.player().onGround()) {
+        if (toBreak.isPresent() && isSafeToCancel && ctx.player().isOnGround()) {
             // we'd like to pause to break this block
             // only change look direction if it's safe (don't want to fuck up an in progress parkour for example
             Rotation rot = toBreak.get().getB();
@@ -563,7 +565,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         }
         List<BlockState> desirableOnHotbar = new ArrayList<>();
         Optional<Placement> toPlace = searchForPlacables(bcc, desirableOnHotbar);
-        if (toPlace.isPresent() && isSafeToCancel && ctx.player().onGround() && ticks <= 0) {
+        if (toPlace.isPresent() && isSafeToCancel && ctx.player().isOnGround() && ticks <= 0) {
             Rotation rot = toPlace.get().rot;
             baritone.getLookBehavior().updateTarget(rot, true);
             ctx.player().getInventory().selected = toPlace.get().hotbarSelection;
@@ -717,13 +719,16 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         List<BetterBlockPos> sourceLiquids = new ArrayList<>();
         List<BetterBlockPos> flowingLiquids = new ArrayList<>();
         Map<BlockState, Integer> missing = new HashMap<>();
+        List<BetterBlockPos> outOfBounds = new ArrayList<>();
         incorrectPositions.forEach(pos -> {
             BlockState state = bcc.bsi.get0(pos);
             if (state.getBlock() instanceof AirBlock) {
-                if (containsBlockState(approxPlaceable, bcc.getSchematic(pos.x, pos.y, pos.z, state))) {
+                BlockState desired = bcc.getSchematic(pos.x, pos.y, pos.z, state);
+                if (desired == null) {
+                    outOfBounds.add(pos);
+                } else if (containsBlockState(approxPlaceable, desired)) {
                     placeable.add(pos);
                 } else {
-                    BlockState desired = bcc.getSchematic(pos.x, pos.y, pos.z, state);
                     missing.put(desired, 1 + missing.getOrDefault(desired, 0));
                 }
             } else {
@@ -741,6 +746,7 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
                 }
             }
         });
+        incorrectPositions.removeAll(outOfBounds);
         List<Goal> toBreak = new ArrayList<>();
         breakable.forEach(pos -> toBreak.add(breakGoal(pos, bcc)));
         List<Goal> toPlace = new ArrayList<>();
@@ -1028,8 +1034,8 @@ public final class BuilderProcess extends BaritoneProcessHelper implements IBuil
         if (!ignoreDirection && ignoredProps.isEmpty()) {
             return first.equals(second); // early return if no properties are being ignored
         }
-        Map<Property<?>, Comparable<?>> map1 = first.getValues();
-        Map<Property<?>, Comparable<?>> map2 = second.getValues();
+        ImmutableMap<Property<?>, Comparable<?>> map1 = first.getValues();
+        ImmutableMap<Property<?>, Comparable<?>> map2 = second.getValues();
         for (Property<?> prop : map1.keySet()) {
             if (map1.get(prop) != map2.get(prop)
                     && !(ignoreDirection && ORIENTATION_PROPS.contains(prop))

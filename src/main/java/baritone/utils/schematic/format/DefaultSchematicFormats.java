@@ -22,7 +22,6 @@ import baritone.api.schematic.format.ISchematicFormat;
 import baritone.utils.schematic.format.defaults.LitematicaSchematic;
 import baritone.utils.schematic.format.defaults.MCEditSchematic;
 import baritone.utils.schematic.format.defaults.SpongeSchematic;
-import net.minecraft.nbt.NbtAccounter;
 import org.apache.commons.io.FilenameUtils;
 
 import java.io.File;
@@ -45,7 +44,7 @@ public enum DefaultSchematicFormats implements ISchematicFormat {
     MCEDIT("schematic") {
         @Override
         public IStaticSchematic parse(InputStream input) throws IOException {
-            return new MCEditSchematic(NbtIo.readCompressed(input, NbtAccounter.unlimitedHeap()));
+            return new MCEditSchematic(NbtIo.readCompressed(input));
         }
     },
 
@@ -57,7 +56,7 @@ public enum DefaultSchematicFormats implements ISchematicFormat {
     SPONGE("schem") {
         @Override
         public IStaticSchematic parse(InputStream input) throws IOException {
-            CompoundTag nbt = NbtIo.readCompressed(input, NbtAccounter.unlimitedHeap());
+            CompoundTag nbt = NbtIo.readCompressed(input);
             int version = nbt.getInt("Version");
             switch (version) {
                 case 1:
@@ -75,16 +74,14 @@ public enum DefaultSchematicFormats implements ISchematicFormat {
     LITEMATICA("litematic") {
         @Override
         public IStaticSchematic parse(InputStream input) throws IOException {
-            CompoundTag nbt = NbtIo.readCompressed(input, NbtAccounter.unlimitedHeap());
+            CompoundTag nbt = NbtIo.readCompressed(input);
             int version = nbt.getInt("Version");
             switch (version) {
                 case 4: //1.12
                 case 5: //1.13-1.17
                     throw new UnsupportedOperationException("This litematic Version is too old.");
-                case 6: //1.18-1.20
-                    throw new UnsupportedOperationException("This litematic Version is too old.");
-                case 7: //1.21+
-                    return new LitematicaSchematic(nbt, false);
+                case 6: //1.18+
+                    return new LitematicaSchematic(nbt);
                 default:
                     throw new UnsupportedOperationException("Unsuported Version of a Litematica Schematic");
             }
